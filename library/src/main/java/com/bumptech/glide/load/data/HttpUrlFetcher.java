@@ -3,9 +3,9 @@ package com.bumptech.glide.load.data;
 import android.text.TextUtils;
 import android.util.Log;
 
-import com.bumptech.glide.Logs;
 import com.bumptech.glide.Priority;
 import com.bumptech.glide.load.DataSource;
+import com.bumptech.glide.load.HttpException;
 import com.bumptech.glide.load.model.GlideUrl;
 import com.bumptech.glide.util.ContentLengthInputStream;
 import com.bumptech.glide.util.LogTime;
@@ -22,8 +22,6 @@ import java.util.Map;
  */
 public class HttpUrlFetcher implements DataFetcher<InputStream> {
   private static final String TAG = "HttpUrlFetcher";
-  private static final String ENCODING_HEADER = "Accept-Encoding";
-  private static final String DEFAULT_ENCODING = "identity";
   private static final int MAXIMUM_REDIRECTS = 5;
   private static final int DEFAULT_TIMEOUT_MS = 2500;
   // Visible for testing.
@@ -52,18 +50,21 @@ public class HttpUrlFetcher implements DataFetcher<InputStream> {
   @Override
   public void loadData(Priority priority, DataCallback<? super InputStream> callback) {
     long startTime = LogTime.getLogTime();
-    InputStream result = null;
+    final InputStream result;
     try {
       result = loadDataWithRedirects(glideUrl.toURL(), 0 /*redirects*/, null /*lastUrl*/,
           glideUrl.getHeaders());
     } catch (IOException e) {
-      if (Logs.isEnabled(Log.DEBUG)) {
-        Logs.log(Log.DEBUG, "Failed to load data for url", e);
+      if (Log.isLoggable(TAG, Log.DEBUG)) {
+        Log.d(TAG, "Failed to load data for url", e);
       }
+      callback.onLoadFailed(e);
+      return;
     }
-    if (Logs.isEnabled(Log.VERBOSE)) {
-      Logs.log(Log.VERBOSE, "Finished http url fetcher fetch in "
-          + LogTime.getElapsedMillis(startTime) + " ms and loaded "  + result);
+
+    if (Log.isLoggable(TAG, Log.VERBOSE)) {
+      Log.v(TAG, "Finished http url fetcher fetch in " + LogTime.getElapsedMillis(startTime)
+          + " ms and loaded " + result);
     }
     callback.onDataReady(result);
   }
@@ -71,13 +72,14 @@ public class HttpUrlFetcher implements DataFetcher<InputStream> {
   private InputStream loadDataWithRedirects(URL url, int redirects, URL lastUrl,
       Map<String, String> headers) throws IOException {
     if (redirects >= MAXIMUM_REDIRECTS) {
-      throw new IOException("Too many (> " + MAXIMUM_REDIRECTS + ") redirects!");
+      throw new HttpException("Too many (> " + MAXIMUM_REDIRECTS + ") redirects!");
     } else {
       // Comparing the URLs using .equals performs additional network I/O and is generally broken.
       // See http://michaelscharf.blogspot.com/2006/11/javaneturlequals-and-hashcode-make.html.
       try {
         if (lastUrl != null && url.toURI().equals(lastUrl.toURI())) {
-            throw new IOException("In re-direct loop");
+          throw new HttpException("In re-direct loop");
+
         }
       } catch (URISyntaxException e) {
         // Do nothing, this is best effort.
@@ -88,11 +90,6 @@ public class HttpUrlFetcher implements DataFetcher<InputStream> {
     for (Map.Entry<String, String> headerEntry : headers.entrySet()) {
       urlConnection.addRequestProperty(headerEntry.getKey(), headerEntry.getValue());
     }
-    // Do our best to avoid gzip since it's both inefficient for images and also makes it more
-    // difficult for us to detect and prevent partial content rendering. See #440.
-    if (TextUtils.isEmpty(urlConnection.getRequestProperty(ENCODING_HEADER))) {
-        urlConnection.setRequestProperty(ENCODING_HEADER, DEFAULT_ENCODING);
-    }
     urlConnection.setConnectTimeout(timeout);
     urlConnection.setReadTimeout(timeout);
     urlConnection.setUseCaches(false);
@@ -101,7 +98,7 @@ public class HttpUrlFetcher implements DataFetcher<InputStream> {
     // Connect explicitly to avoid errors in decoders if connection fails.
     urlConnection.connect();
     if (isCancelled) {
-        return null;
+      return null;
     }
     final int statusCode = urlConnection.getResponseCode();
     if (statusCode / 100 == 2) {
@@ -109,16 +106,14 @@ public class HttpUrlFetcher implements DataFetcher<InputStream> {
     } else if (statusCode / 100 == 3) {
       String redirectUrlString = urlConnection.getHeaderField("Location");
       if (TextUtils.isEmpty(redirectUrlString)) {
-          throw new IOException("Received empty or null redirect url");
+        throw new HttpException("Received empty or null redirect url");
       }
       URL redirectUrl = new URL(url, redirectUrlString);
       return loadDataWithRedirects(redirectUrl, redirects + 1, url, headers);
+    } else if (statusCode == -1) {
+      throw new HttpException(statusCode);
     } else {
-      if (statusCode == -1) {
-          throw new IOException("Unable to retrieve response code from HttpUrlConnection.");
-      }
-      throw new IOException("Request failed " + statusCode + ": "
-          + urlConnection.getResponseMessage());
+      throw new HttpException(urlConnection.getResponseMessage(), statusCode);
     }
   }
 

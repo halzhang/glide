@@ -1,3 +1,6 @@
+exec {
+  commandLine "git", "submodule", "update", "--init", "--recursive"
+}
 include ':library'
 include ':glide'
 include ':third_party:gif_decoder'
@@ -10,6 +13,7 @@ include ':integration'
 include ':integration:volley'
 include ':integration:okhttp'
 include ':integration:gifencoder'
+include ':integration:recyclerview'
 include ':testutil'
 
 rootProject.name = 'glide-parent'

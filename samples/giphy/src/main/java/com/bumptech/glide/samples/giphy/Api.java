@@ -22,8 +22,8 @@ public final class Api {
   private static volatile Api api = null;
   private static final String BETA_KEY = "dc6zaTOxFJmzC";
   private static final String BASE_URL = "https://api.giphy.com/";
-  private static final String SEARCH_PATH = "/v1/gifs/search";
-  private static final String TRENDING_PATH = "/v1/gifs/trending";
+  private static final String SEARCH_PATH = "v1/gifs/search";
+  private static final String TRENDING_PATH = "v1/gifs/trending";
   private final Handler bgHandler;
   private final Handler mainHandler;
   private final HashSet<Monitor> monitors = new HashSet<Monitor>();
@@ -171,13 +171,13 @@ public final class Api {
    */
   public static class GifUrlSet {
     public GifImage original;
-    public GifImage fixed_width_downsampled;
-    public GifImage fixed_height_downsampled;
+    public GifImage fixed_width;
+    public GifImage fixed_height;
 
     @Override
     public String toString() {
-      return "GifUrlSet{" + "original=" + original + ", fixed_width_downsampled="
-          + fixed_width_downsampled + ", fixed_height_downsampled=" + fixed_height_downsampled
+      return "GifUrlSet{" + "original=" + original + ", fixed_width="
+          + fixed_width + ", fixed_height=" + fixed_height
           + '}';
     }
   }

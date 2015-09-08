@@ -3,7 +3,9 @@ package com.bumptech.glide.request.target;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.graphics.Point;
+import android.graphics.drawable.Drawable;
 import android.os.Build;
+import android.support.annotation.Nullable;
 import android.util.Log;
 import android.view.Display;
 import android.view.View;
@@ -33,13 +35,15 @@ import java.util.List;
  * View#setTag(Object)} on a view, consider using {@link BaseTarget} or {@link SimpleTarget}
  * instead. </p>
  *
+ * <p> Subclasses must call super in {@link #onLoadCleared(Drawable)} </p>
+ *
  * @param <T> The specific subclass of view wrapped by this target.
  * @param <Z> The resource type this target will receive.
  */
 public abstract class ViewTarget<T extends View, Z> extends BaseTarget<Z> {
   private static final String TAG = "ViewTarget";
   private static boolean isTagUsedAtLeastOnce = false;
-  private static Integer tagId = null;
+  @Nullable private static Integer tagId = null;
 
   protected final T view;
   private final SizeDeterminer sizeDeterminer;
@@ -70,13 +74,19 @@ public abstract class ViewTarget<T extends View, Z> extends BaseTarget<Z> {
     sizeDeterminer.getSize(cb);
   }
 
+  @Override
+  public void onLoadCleared(Drawable placeholder) {
+    super.onLoadCleared(placeholder);
+    sizeDeterminer.clearCallbacksAndListener();
+  }
+
   /**
    * Stores the request using {@link View#setTag(Object)}.
    *
    * @param request {@inheritDoc}
    */
   @Override
-  public void setRequest(Request request) {
+  public void setRequest(@Nullable Request request) {
     setTag(request);
   }
 
@@ -92,6 +102,7 @@ public abstract class ViewTarget<T extends View, Z> extends BaseTarget<Z> {
    * com.bumptech.glide.request.Request}. </p>
    */
   @Override
+  @Nullable
   public Request getRequest() {
     Object tag = getTag();
     Request request = null;
@@ -111,7 +122,7 @@ public abstract class ViewTarget<T extends View, Z> extends BaseTarget<Z> {
     return "Target for: " + view;
   }
 
-  private void setTag(Object tag) {
+  private void setTag(@Nullable Object tag) {
     if (tagId == null) {
       isTagUsedAtLeastOnce = true;
       view.setTag(tag);
@@ -120,6 +131,7 @@ public abstract class ViewTarget<T extends View, Z> extends BaseTarget<Z> {
     }
   }
 
+  @Nullable
   private Object getTag() {
     if (tagId == null) {
       return view.getTag();
@@ -160,8 +172,8 @@ public abstract class ViewTarget<T extends View, Z> extends BaseTarget<Z> {
     private final View view;
     private final List<SizeReadyCallback> cbs = new ArrayList<>();
 
-    private SizeDeterminerLayoutListener layoutListener;
-    private Point displayDimens;
+    @Nullable private SizeDeterminerLayoutListener layoutListener;
+    @Nullable private Point displayDimens;
 
     public SizeDeterminer(View view) {
       this.view = view;
@@ -171,7 +183,6 @@ public abstract class ViewTarget<T extends View, Z> extends BaseTarget<Z> {
       for (SizeReadyCallback cb : cbs) {
         cb.onSizeReady(width, height);
       }
-      cbs.clear();
     }
 
     private void checkCurrentDimens() {
@@ -186,20 +197,10 @@ public abstract class ViewTarget<T extends View, Z> extends BaseTarget<Z> {
       }
 
       notifyCbs(currentWidth, currentHeight);
-      // Keep a reference to the layout listener and remove it here
-      // rather than having the observer remove itself because the observer
-      // we add the listener to will be almost immediately merged into
-      // another observer and will therefore never be alive. If we instead
-      // keep a reference to the listener and remove it here, we get the
-      // current view tree observer and should succeed.
-      ViewTreeObserver observer = view.getViewTreeObserver();
-      if (observer.isAlive()) {
-        observer.removeOnPreDrawListener(layoutListener);
-      }
-      layoutListener = null;
+      clearCallbacksAndListener();
     }
 
-    public void getSize(SizeReadyCallback cb) {
+    void getSize(SizeReadyCallback cb) {
       int currentWidth = getViewWidthOrParam();
       int currentHeight = getViewHeightOrParam();
       if (isSizeValid(currentWidth) && isSizeValid(currentHeight)) {
@@ -217,6 +218,21 @@ public abstract class ViewTarget<T extends View, Z> extends BaseTarget<Z> {
           observer.addOnPreDrawListener(layoutListener);
         }
       }
+    }
+
+    void clearCallbacksAndListener() {
+      // Keep a reference to the layout listener and remove it here
+      // rather than having the observer remove itself because the observer
+      // we add the listener to will be almost immediately merged into
+      // another observer and will therefore never be alive. If we instead
+      // keep a reference to the listener and remove it here, we get the
+      // current view tree observer and should succeed.
+      ViewTreeObserver observer = view.getViewTreeObserver();
+      if (observer.isAlive()) {
+        observer.removeOnPreDrawListener(layoutListener);
+      }
+      layoutListener = null;
+      cbs.clear();
     }
 
     private int getViewHeightOrParam() {

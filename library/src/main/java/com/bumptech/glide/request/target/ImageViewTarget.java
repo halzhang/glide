@@ -1,6 +1,8 @@
 package com.bumptech.glide.request.target;
 
+import android.graphics.drawable.Animatable;
 import android.graphics.drawable.Drawable;
+import android.support.annotation.Nullable;
 import android.widget.ImageView;
 
 import com.bumptech.glide.request.transition.Transition;
@@ -15,6 +17,9 @@ import com.bumptech.glide.request.transition.Transition;
 public abstract class ImageViewTarget<Z> extends ViewTarget<ImageView, Z>
     implements Transition.ViewAdapter {
 
+  @Nullable
+  private Animatable animatable;
+
   public ImageViewTarget(ImageView view) {
     super(view);
   }
@@ -24,6 +29,7 @@ public abstract class ImageViewTarget<Z> extends ViewTarget<ImageView, Z>
    * using {@link android.widget.ImageView#getDrawable()}.
    */
   @Override
+  @Nullable
   public Drawable getCurrentDrawable() {
     return view.getDrawable();
   }
@@ -46,7 +52,8 @@ public abstract class ImageViewTarget<Z> extends ViewTarget<ImageView, Z>
    * @param placeholder {@inheritDoc}
    */
   @Override
-  public void onLoadStarted(Drawable placeholder) {
+  public void onLoadStarted(@Nullable Drawable placeholder) {
+    super.onLoadStarted(placeholder);
     setResource(null);
     setDrawable(placeholder);
   }
@@ -58,7 +65,8 @@ public abstract class ImageViewTarget<Z> extends ViewTarget<ImageView, Z>
    * @param errorDrawable {@inheritDoc}
    */
   @Override
-  public void onLoadFailed(Drawable errorDrawable) {
+  public void onLoadFailed(@Nullable Drawable errorDrawable) {
+    super.onLoadFailed(errorDrawable);
     setResource(null);
     setDrawable(errorDrawable);
   }
@@ -70,19 +78,38 @@ public abstract class ImageViewTarget<Z> extends ViewTarget<ImageView, Z>
    * @param placeholder {@inheritDoc}
    */
   @Override
-  public void onLoadCleared(Drawable placeholder) {
+  public void onLoadCleared(@Nullable Drawable placeholder) {
+    super.onLoadCleared(placeholder);
     setResource(null);
     setDrawable(placeholder);
   }
 
   @Override
-  public void onResourceReady(Z resource, Transition<? super Z> transition) {
+  public void onResourceReady(Z resource, @Nullable Transition<? super Z> transition) {
     if (transition == null || !transition.transition(resource, this)) {
       setResource(resource);
     }
+
+    if (resource instanceof Animatable) {
+      animatable = (Animatable) resource;
+      animatable.start();
+    }
   }
 
-  protected abstract void setResource(Z resource);
+  @Override
+  public void onStart() {
+    if (animatable != null) {
+      animatable.start();
+    }
+  }
 
+  @Override
+  public void onStop() {
+    if (animatable != null) {
+      animatable.stop();
+    }
+  }
+
+  protected abstract void setResource(@Nullable Z resource);
 }
 

@@ -37,10 +37,13 @@ public class StreamBitmapDecoder implements ResourceDecoder<InputStream, Bitmap>
 
     // Use to fix the mark limit to avoid allocating buffers that fit entire images.
     final RecyclableBufferedInputStream bufferedStream;
+    final boolean ownsBufferedStream;
     if (source instanceof RecyclableBufferedInputStream) {
       bufferedStream = (RecyclableBufferedInputStream) source;
+      ownsBufferedStream = false;
     } else {
       bufferedStream = new RecyclableBufferedInputStream(source, byteArrayPool);
+      ownsBufferedStream = true;
     }
 
     // Use to retrieve exceptions thrown while reading.
@@ -59,7 +62,9 @@ public class StreamBitmapDecoder implements ResourceDecoder<InputStream, Bitmap>
       return downsampler.decode(invalidatingStream, width, height, options, callbacks);
     } finally {
       exceptionStream.release();
-      bufferedStream.release();
+      if (ownsBufferedStream) {
+        bufferedStream.release();
+      }
     }
   }
 
@@ -93,8 +98,8 @@ public class StreamBitmapDecoder implements ResourceDecoder<InputStream, Bitmap>
       // ExceptionCatchingInputStream and throw them here.
       IOException streamException = exceptionStream.getException();
       if (streamException != null) {
-        if (downsampled != null && !bitmapPool.put(downsampled)) {
-          downsampled.recycle();
+        if (downsampled != null) {
+          bitmapPool.put(downsampled);
         }
         throw streamException;
       }

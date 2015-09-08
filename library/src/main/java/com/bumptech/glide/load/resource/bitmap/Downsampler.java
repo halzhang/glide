@@ -7,7 +7,6 @@ import android.os.Build;
 import android.util.DisplayMetrics;
 import android.util.Log;
 
-import com.bumptech.glide.Logs;
 import com.bumptech.glide.load.DecodeFormat;
 import com.bumptech.glide.load.Option;
 import com.bumptech.glide.load.Options;
@@ -187,9 +186,9 @@ public final class Downsampler {
       // the expected density dpi.
       downsampled.setDensity(displayMetrics.densityDpi);
 
-      rotated = TransformationUtils.rotateImageExif(downsampled, bitmapPool, orientation);
-      if (!downsampled.equals(rotated) && !bitmapPool.put(downsampled)) {
-        downsampled.recycle();
+      rotated = TransformationUtils.rotateImageExif(bitmapPool, downsampled, orientation);
+      if (!downsampled.equals(rotated)) {
+        bitmapPool.put(downsampled);
       }
     }
 
@@ -249,8 +248,12 @@ public final class Downsampler {
     float adjustedScaleFactor = powerOfTwoSampleSize * exactScaleFactor;
 
     options.inSampleSize = powerOfTwoSampleSize;
-    options.inTargetDensity = (int) (1000 * adjustedScaleFactor + 0.5f);
-    options.inDensity = 1000;
+    // Density scaling is only supported if inBitmap is null prior to KitKat. Avoid setting
+    // densities here so we calculate the final Bitmap size correctly.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+      options.inTargetDensity = (int) (1000 * adjustedScaleFactor + 0.5f);
+      options.inDensity = 1000;
+    }
     if (isScaling(options)) {
       options.inScaled = true;
     } else {
@@ -271,12 +274,12 @@ public final class Downsampler {
 
   private int getOrientation(InputStream is) throws IOException {
     is.mark(MARK_POSITION);
-    int orientation = 0;
+    int orientation = ImageHeaderParser.UNKNOWN_ORIENTATION;
     try {
       orientation = new ImageHeaderParser(is, byteArrayPool).getOrientation();
     } catch (IOException e) {
-      if (Logs.isEnabled(Log.DEBUG)) {
-        Logs.log(Log.DEBUG, "Cannot determine the image orientation from header", e);
+      if (Log.isLoggable(TAG, Log.DEBUG)) {
+        Log.d(TAG, "Cannot determine the image orientation from header", e);
       }
     } finally {
       is.reset();
@@ -297,8 +300,8 @@ public final class Downsampler {
       int sampleSize = options.inSampleSize;
       int downsampledWidth = (int) Math.ceil(sourceWidth / (float) sampleSize);
       int downsampledHeight = (int) Math.ceil(sourceHeight / (float) sampleSize);
-      int expectedWidth = (int) Math.ceil(downsampledWidth * densityMultiplier);
-      int expectedHeight = (int) Math.ceil(downsampledHeight * densityMultiplier);
+      int expectedWidth = Math.round(downsampledWidth * densityMultiplier);
+      int expectedHeight = Math.round(downsampledHeight * densityMultiplier);
 
       if (Log.isLoggable(TAG, Log.VERBOSE)) {
         Log.v(TAG, "Calculated target [" + expectedWidth + "x" + expectedHeight + "] for source"
@@ -308,8 +311,11 @@ public final class Downsampler {
             + ", density: " + options.inDensity
             + ", density multiplier: " + densityMultiplier);
       }
-      // BitmapFactory will clear out the Bitmap before writing to it, so getDirty is safe.
-      setInBitmap(options, pool.getDirty(expectedWidth, expectedHeight, options.inPreferredConfig));
+      // If this isn't an image, or BitmapFactory was unable to parse the size, width and height
+      // will be -1 here.
+      if (expectedWidth > 0 && expectedHeight > 0) {
+        setInBitmap(options, pool, expectedWidth, expectedHeight, options.inPreferredConfig);
+      }
     }
     return decodeStream(is, options, callbacks);
   }
@@ -328,8 +334,8 @@ public final class Downsampler {
       // See: https://groups.google.com/forum/#!msg/android-developers/Mp0MFVFi1Fo/e8ZQ9FGdWdEJ
       return TYPES_THAT_USE_POOL_PRE_KITKAT.contains(type);
     } catch (IOException e) {
-      if (Logs.isEnabled(Log.DEBUG)) {
-        Logs.log(Log.DEBUG, "Cannot determine the image type from header", e);
+      if (Log.isLoggable(TAG, Log.DEBUG)) {
+        Log.d(TAG, "Cannot determine the image type from header", e);
       }
     } finally {
       is.reset();
@@ -349,9 +355,9 @@ public final class Downsampler {
     try {
       hasAlpha = new ImageHeaderParser(is, byteArrayPool).hasAlpha();
     } catch (IOException e) {
-      if (Logs.isEnabled(Log.DEBUG)) {
-        Logs.log(Log.DEBUG, "Cannot determine whether the image has alpha or not from header for"
-            + " format " + format, e);
+      if (Log.isLoggable(TAG, Log.DEBUG)) {
+        Log.d(TAG, "Cannot determine whether the image has alpha or not from header"
+            + ", format " + format, e);
       }
     } finally {
       is.reset();
@@ -460,9 +466,11 @@ public final class Downsampler {
   }
 
   @TargetApi(Build.VERSION_CODES.HONEYCOMB)
-  private static void setInBitmap(BitmapFactory.Options options, Bitmap recycled) {
+  private static void setInBitmap(BitmapFactory.Options options, BitmapPool bitmapPool, int width,
+      int height, Bitmap.Config config) {
     if (Build.VERSION_CODES.HONEYCOMB <= Build.VERSION.SDK_INT) {
-      options.inBitmap = recycled;
+      // BitmapFactory will clear out the Bitmap before writing to it, so getDirty is safe.
+      options.inBitmap = bitmapPool.getDirty(width, height, config);
     }
   }
 

@@ -25,8 +25,9 @@ import java.util.Map;
  * retrieving existing ones from activities and fragment.
  */
 public class RequestManagerRetriever implements Handler.Callback {
-  private static final String TAG = "RMRetriever";
+  // Visible for testing.
   static final String FRAGMENT_TAG = "com.bumptech.glide.manager";
+  private static final String TAG = "RMRetriever";
 
   /**
    * The singleton instance of RequestManagerRetriever.
@@ -113,7 +114,7 @@ public class RequestManagerRetriever implements Handler.Callback {
     } else {
       assertNotDestroyed(activity);
       FragmentManager fm = activity.getSupportFragmentManager();
-      return supportFragmentGet(activity, fm);
+      return supportFragmentGet(activity, fm, null);
     }
   }
 
@@ -126,7 +127,7 @@ public class RequestManagerRetriever implements Handler.Callback {
       return get(fragment.getActivity().getApplicationContext());
     } else {
       FragmentManager fm = fragment.getChildFragmentManager();
-      return supportFragmentGet(fragment.getActivity(), fm);
+      return supportFragmentGet(fragment.getActivity(), fm, fragment);
     }
   }
 
@@ -137,7 +138,7 @@ public class RequestManagerRetriever implements Handler.Callback {
     } else {
       assertNotDestroyed(activity);
       android.app.FragmentManager fm = activity.getFragmentManager();
-      return fragmentGet(activity, fm);
+      return fragmentGet(activity, fm, null);
     }
   }
 
@@ -158,17 +159,19 @@ public class RequestManagerRetriever implements Handler.Callback {
       return get(fragment.getActivity().getApplicationContext());
     } else {
       android.app.FragmentManager fm = fragment.getChildFragmentManager();
-      return fragmentGet(fragment.getActivity(), fm);
+      return fragmentGet(fragment.getActivity(), fm, fragment);
     }
   }
 
   @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
-  RequestManagerFragment getRequestManagerFragment(final android.app.FragmentManager fm) {
+  RequestManagerFragment getRequestManagerFragment(
+      final android.app.FragmentManager fm, android.app.Fragment parentHint) {
     RequestManagerFragment current = (RequestManagerFragment) fm.findFragmentByTag(FRAGMENT_TAG);
     if (current == null) {
       current = pendingRequestManagerFragments.get(fm);
       if (current == null) {
         current = new RequestManagerFragment();
+        current.setParentFragmentHint(parentHint);
         pendingRequestManagerFragments.put(fm, current);
         fm.beginTransaction().add(current, FRAGMENT_TAG).commitAllowingStateLoss();
         handler.obtainMessage(ID_REMOVE_FRAGMENT_MANAGER, fm).sendToTarget();
@@ -178,8 +181,9 @@ public class RequestManagerRetriever implements Handler.Callback {
   }
 
   @TargetApi(Build.VERSION_CODES.HONEYCOMB)
-  RequestManager fragmentGet(Context context, android.app.FragmentManager fm) {
-    RequestManagerFragment current = getRequestManagerFragment(fm);
+  RequestManager fragmentGet(Context context, android.app.FragmentManager fm,
+      android.app.Fragment parentHint) {
+    RequestManagerFragment current = getRequestManagerFragment(fm, parentHint);
     RequestManager requestManager = current.getRequestManager();
     if (requestManager == null) {
       requestManager =
@@ -189,13 +193,15 @@ public class RequestManagerRetriever implements Handler.Callback {
     return requestManager;
   }
 
-  SupportRequestManagerFragment getSupportRequestManagerFragment(final FragmentManager fm) {
+  SupportRequestManagerFragment getSupportRequestManagerFragment(
+      final FragmentManager fm, Fragment parentHint) {
     SupportRequestManagerFragment current =
         (SupportRequestManagerFragment) fm.findFragmentByTag(FRAGMENT_TAG);
     if (current == null) {
       current = pendingSupportRequestManagerFragments.get(fm);
       if (current == null) {
         current = new SupportRequestManagerFragment();
+        current.setParentFragmentHint(parentHint);
         pendingSupportRequestManagerFragments.put(fm, current);
         fm.beginTransaction().add(current, FRAGMENT_TAG).commitAllowingStateLoss();
         handler.obtainMessage(ID_REMOVE_SUPPORT_FRAGMENT_MANAGER, fm).sendToTarget();
@@ -204,8 +210,8 @@ public class RequestManagerRetriever implements Handler.Callback {
     return current;
   }
 
-  RequestManager supportFragmentGet(Context context, FragmentManager fm) {
-    SupportRequestManagerFragment current = getSupportRequestManagerFragment(fm);
+  RequestManager supportFragmentGet(Context context, FragmentManager fm, Fragment parentHint) {
+    SupportRequestManagerFragment current = getSupportRequestManagerFragment(fm, parentHint);
     RequestManager requestManager = current.getRequestManager();
     if (requestManager == null) {
       requestManager =

@@ -2,40 +2,41 @@ package com.bumptech.glide;
 
 import android.content.Context;
 import android.os.Build;
+import android.util.Log;
 
 import com.bumptech.glide.load.DecodeFormat;
 import com.bumptech.glide.load.engine.Engine;
+import com.bumptech.glide.load.engine.bitmap_recycle.ArrayPool;
 import com.bumptech.glide.load.engine.bitmap_recycle.BitmapPool;
 import com.bumptech.glide.load.engine.bitmap_recycle.BitmapPoolAdapter;
-import com.bumptech.glide.load.engine.bitmap_recycle.ByteArrayPool;
+import com.bumptech.glide.load.engine.bitmap_recycle.LruArrayPool;
 import com.bumptech.glide.load.engine.bitmap_recycle.LruBitmapPool;
-import com.bumptech.glide.load.engine.bitmap_recycle.LruByteArrayPool;
 import com.bumptech.glide.load.engine.cache.DiskCache;
 import com.bumptech.glide.load.engine.cache.InternalCacheDiskCacheFactory;
 import com.bumptech.glide.load.engine.cache.LruResourceCache;
 import com.bumptech.glide.load.engine.cache.MemoryCache;
 import com.bumptech.glide.load.engine.cache.MemorySizeCalculator;
-import com.bumptech.glide.load.engine.executor.FifoPriorityThreadPoolExecutor;
-
-import java.util.concurrent.ExecutorService;
+import com.bumptech.glide.load.engine.executor.GlideExecutor;
+import com.bumptech.glide.request.RequestOptions;
 
 /**
  * A builder class for setting default structural classes for Glide to use.
  */
-public class GlideBuilder {
+public final class GlideBuilder {
   private final Context context;
 
   private Engine engine;
   private BitmapPool bitmapPool;
-  private ByteArrayPool byteArrayPool;
+  private ArrayPool arrayPool;
   private MemoryCache memoryCache;
-  private ExecutorService sourceService;
-  private ExecutorService diskCacheService;
-  private DecodeFormat decodeFormat;
+  private GlideExecutor sourceExecutor;
+  private GlideExecutor diskCacheExecutor;
   private DiskCache.Factory diskCacheFactory;
   private MemorySizeCalculator memorySizeCalculator;
+  private int logLevel = Log.INFO;
+  private RequestOptions defaultRequestOptions = new RequestOptions();
 
-  public GlideBuilder(Context context) {
+  GlideBuilder(Context context) {
     this.context = context.getApplicationContext();
   }
 
@@ -52,14 +53,14 @@ public class GlideBuilder {
   }
 
   /**
-   * Sets the {@link ByteArrayPool} implementation to allow variable sized byte arrays to be stored
+   * Sets the {@link ArrayPool} implementation to allow variable sized arrays to be stored
    * and retrieved as needed.
    *
-   * @param byteArrayPool The pool to use.
+   * @param arrayPool The pool to use.
    * @return This builder.
    */
-  public GlideBuilder setByteArrayPool(ByteArrayPool byteArrayPool) {
-    this.byteArrayPool = byteArrayPool;
+  public GlideBuilder setArrayPool(ArrayPool arrayPool) {
+    this.arrayPool = arrayPool;
     return this;
   }
 
@@ -100,7 +101,7 @@ public class GlideBuilder {
    * to construct the {@link com.bumptech.glide.load.engine.cache.DiskCache} to use to store {@link
    * com.bumptech.glide.load.engine.Resource} data on disk.
    *
-   * @param diskCacheFactory The disk cche factory to use.
+   * @param diskCacheFactory The disk cache factory to use.
    * @return This builder.
    */
   public GlideBuilder setDiskCache(DiskCache.Factory diskCacheFactory) {
@@ -113,15 +114,15 @@ public class GlideBuilder {
    * {@link com.bumptech.glide.load.engine.Resource}s that are not already in the cache.
    *
    * <p> Any implementation must order requests based on their {@link com.bumptech.glide.Priority}
-   * for thumbnail requests to work properly. </p>
+   * for thumbnail requests to work properly.
    *
    * @param service The ExecutorService to use.
    * @return This builder.
-   * @see #setDiskCacheService(java.util.concurrent.ExecutorService)
-   * @see com.bumptech.glide.load.engine.executor.FifoPriorityThreadPoolExecutor
+   * @see #setDiskCacheExecutor(GlideExecutor)
+   * @see GlideExecutor
    */
-  public GlideBuilder setResizeService(ExecutorService service) {
-    this.sourceService = service;
+  public GlideBuilder setResizeExecutor(GlideExecutor service) {
+    this.sourceExecutor = service;
     return this;
   }
 
@@ -130,15 +131,30 @@ public class GlideBuilder {
    * {@link com.bumptech.glide.load.engine.Resource}s that are currently in cache.
    *
    * <p> Any implementation must order requests based on their {@link com.bumptech.glide.Priority}
-   * for thumbnail requests to work properly. </p>
+   * for thumbnail requests to work properly.
    *
    * @param service The ExecutorService to use.
    * @return This builder.
-   * @see #setResizeService(java.util.concurrent.ExecutorService)
-   * @see com.bumptech.glide.load.engine.executor.FifoPriorityThreadPoolExecutor
+   * @see #setResizeExecutor(GlideExecutor)
+   * @see GlideExecutor
    */
-  public GlideBuilder setDiskCacheService(ExecutorService service) {
-    this.diskCacheService = service;
+  public GlideBuilder setDiskCacheExecutor(GlideExecutor service) {
+    this.diskCacheExecutor = service;
+    return this;
+  }
+
+  /**
+   * Sets the default {@link RequestOptions} to use for all loads across the app.
+   *
+   * <p>Applying additional options with {@link
+   * RequestBuilder#apply(com.bumptech.glide.request.BaseRequestOptions)} will override defaults
+   * set here.
+   *
+   * @param requestOptions The options to use by default.
+   * @return This builder.
+   */
+  public GlideBuilder setDefaultRequestOptions(RequestOptions requestOptions) {
+    this.defaultRequestOptions = requestOptions;
     return this;
   }
 
@@ -150,16 +166,14 @@ public class GlideBuilder {
    * <p> Decode format is always a suggestion, not a requirement. See {@link
    * com.bumptech.glide.load.DecodeFormat} for more details. </p>
    *
-   * <p> If you instantiate and use a custom decoder, it will use {@link
-   * com.bumptech.glide.load.DecodeFormat#DEFAULT} as its default. </p>
-   *
-   * <p> Calls to this method are ignored on KitKat and Lollipop. See #301. </p>
-   *
    * @param decodeFormat The format to use.
    * @return This builder.
+   *
+   * @deprecated Use {@link #setDefaultRequestOptions(RequestOptions)} instead.
    */
+  @Deprecated
   public GlideBuilder setDecodeFormat(DecodeFormat decodeFormat) {
-    this.decodeFormat = decodeFormat;
+    defaultRequestOptions.apply(new RequestOptions().format(decodeFormat));
     return this;
   }
 
@@ -191,6 +205,40 @@ public class GlideBuilder {
     return this;
   }
 
+  /**
+   * Sets a log level constant from those in {@link Log} to indicate the desired log verbosity.
+   *
+   * <p>The level must be one of {@link Log#VERBOSE}, {@link Log#DEBUG}, {@link Log#INFO},
+   * {@link Log#WARN}, or {@link Log#ERROR}.
+   *
+   * <p>{@link Log#VERBOSE} means one or more lines will be logged per request, including
+   * timing logs and failures. {@link Log#DEBUG} means at most one line will be logged
+   * per successful request, including timing logs, although many lines may be logged for
+   * failures including multiple complete stack traces. {@link Log#INFO} means
+   * failed loads will be logged including multiple complete stack traces, but successful loads
+   * will not be logged at all. {@link Log#WARN} means only summaries of failed loads will be
+   * logged. {@link Log#ERROR} means only exceptional cases will be logged.
+   *
+   * <p>All logs will be logged using the 'Glide' tag.
+   *
+   * <p>Many other debugging logs are available in individual classes. The log level supplied here
+   * only controls a small set of informative and well formatted logs. Users wishing to debug
+   * certain aspects of the library can look for individual <code>TAG</code> variables at the tops
+   * of classes and use <code>adb shell setprop log.tag.TAG</code> to enable or disable any relevant
+   * tags.
+   *
+   * @param logLevel The log level to use from {@link Log}.
+   * @return This builder.
+   */
+  public GlideBuilder setLogLevel(int logLevel) {
+    if (logLevel < Log.VERBOSE || logLevel > Log.ERROR) {
+      throw new IllegalArgumentException("Log level must be one of Log.VERBOSE, Log.DEBUG,"
+          + " Log.INFO, Log.WARN, or Log.ERROR");
+    }
+    this.logLevel = logLevel;
+    return this;
+  }
+
   // For testing.
   GlideBuilder setEngine(Engine engine) {
     this.engine = engine;
@@ -198,12 +246,12 @@ public class GlideBuilder {
   }
 
   Glide createGlide() {
-    if (sourceService == null) {
+    if (sourceExecutor == null) {
       final int cores = Math.max(1, Runtime.getRuntime().availableProcessors());
-      sourceService = new FifoPriorityThreadPoolExecutor("source", cores);
+      sourceExecutor = new GlideExecutor("source", cores);
     }
-    if (diskCacheService == null) {
-      diskCacheService = new FifoPriorityThreadPoolExecutor("disk-cache", 1);
+    if (diskCacheExecutor == null) {
+      diskCacheExecutor = new GlideExecutor("disk-cache", 1);
     }
 
     if (memorySizeCalculator == null) {
@@ -219,8 +267,8 @@ public class GlideBuilder {
       }
     }
 
-    if (byteArrayPool == null) {
-      byteArrayPool = new LruByteArrayPool();
+    if (arrayPool == null) {
+      arrayPool = new LruArrayPool(memorySizeCalculator.getArrayPoolSizeInBytes());
     }
 
     if (memoryCache == null) {
@@ -232,13 +280,16 @@ public class GlideBuilder {
     }
 
     if (engine == null) {
-      engine = new Engine(memoryCache, diskCacheFactory, diskCacheService, sourceService);
+      engine = new Engine(memoryCache, diskCacheFactory, diskCacheExecutor, sourceExecutor);
     }
 
-    if (decodeFormat == null) {
-      decodeFormat = DecodeFormat.DEFAULT;
-    }
-
-    return new Glide(engine, memoryCache, bitmapPool, byteArrayPool, context, decodeFormat);
+    return new Glide(
+        engine,
+        memoryCache,
+        bitmapPool,
+        arrayPool,
+        context,
+        logLevel,
+        defaultRequestOptions.lock());
   }
 }

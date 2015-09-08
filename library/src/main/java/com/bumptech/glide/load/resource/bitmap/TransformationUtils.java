@@ -2,18 +2,23 @@ package com.bumptech.glide.load.resource.bitmap;
 
 import android.annotation.TargetApi;
 import android.graphics.Bitmap;
+import android.graphics.BitmapShader;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.graphics.Shader;
 import android.media.ExifInterface;
 import android.os.Build;
+import android.support.annotation.NonNull;
 import android.util.Log;
 
 import com.bumptech.glide.load.engine.bitmap_recycle.BitmapPool;
+import com.bumptech.glide.util.Preconditions;
 
 /**
  * A class with methods to efficiently resize Bitmaps.
@@ -22,10 +27,12 @@ public final class TransformationUtils {
   private static final String TAG = "TransformationUtils";
   public static final int PAINT_FLAGS = Paint.DITHER_FLAG | Paint.FILTER_BITMAP_FLAG;
   private static final Paint DEFAULT_PAINT = new Paint(PAINT_FLAGS);
-  private static final Paint CIRCLE_CROP_PAINT;
+  private static final int CIRCLE_CROP_PAINT_FLAGS = PAINT_FLAGS | Paint.ANTI_ALIAS_FLAG;
+  private static final Paint CIRCLE_CROP_SHAPE_PAINT = new Paint(CIRCLE_CROP_PAINT_FLAGS);
+  private static final Paint CIRCLE_CROP_BITMAP_PAINT;
   static {
-    CIRCLE_CROP_PAINT = new Paint(PAINT_FLAGS | Paint.ANTI_ALIAS_FLAG);
-    CIRCLE_CROP_PAINT.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_IN));
+    CIRCLE_CROP_BITMAP_PAINT = new Paint(CIRCLE_CROP_PAINT_FLAGS);
+    CIRCLE_CROP_BITMAP_PAINT.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_IN));
   }
 
   private TransformationUtils() {
@@ -37,17 +44,15 @@ public final class TransformationUtils {
    * dimensions. This operation is significantly less expensive in terms of memory if a mutable
    * Bitmap with the given dimensions is passed in as well.
    *
-   * @param recycled A mutable Bitmap with dimensions width and height that we can load the cropped
-   *                 portion of toCrop into.
+   * @param pool     The BitmapPool to obtain a bitmap from.
    * @param toCrop   The Bitmap to resize.
    * @param width    The width in pixels of the final Bitmap.
    * @param height   The height in pixels of the final Bitmap.
    * @return The resized Bitmap (will be recycled if recycled is not null).
    */
-  public static Bitmap centerCrop(Bitmap recycled, Bitmap toCrop, int width, int height) {
-    if (toCrop == null) {
-      return null;
-    } else if (toCrop.getWidth() == width && toCrop.getHeight() == height) {
+  public static Bitmap centerCrop(@NonNull BitmapPool pool, @NonNull Bitmap toCrop, int width,
+      int height) {
+    if (toCrop.getWidth() == width && toCrop.getHeight() == height) {
       return toCrop;
     }
     // From ImageView/Bitmap.createScaledBitmap.
@@ -64,18 +69,14 @@ public final class TransformationUtils {
 
     m.setScale(scale, scale);
     m.postTranslate((int) (dx + 0.5f), (int) (dy + 0.5f));
-    final Bitmap result;
-    if (recycled != null) {
-      result = recycled;
-    } else {
-      result = Bitmap.createBitmap(width, height, getSafeConfig(toCrop));
-    }
 
+    Bitmap result = pool.get(width, height, getSafeConfig(toCrop));
     // We don't add or remove alpha, so keep the alpha setting of the Bitmap we were given.
     TransformationUtils.setAlpha(toCrop, result);
 
     Canvas canvas = new Canvas(result);
     canvas.drawBitmap(toCrop, m, DEFAULT_PAINT);
+    clear(canvas);
     return result;
   }
 
@@ -83,14 +84,15 @@ public final class TransformationUtils {
    * An expensive operation to resize the given Bitmap down so that it fits within the given
    * dimensions maintain the original proportions.
    *
+   * @param pool   The BitmapPool obtain a bitmap from.
    * @param toFit  The Bitmap to shrink.
-   * @param pool   The BitmapPool to try to reuse a bitmap from.
    * @param width  The width in pixels the final image will fit within.
    * @param height The height in pixels the final image will fit within.
    * @return A new Bitmap shrunk to fit within the given dimensions, or toFit if toFit's width or
    * height matches the given dimensions and toFit fits within the given dimensions
    */
-  public static Bitmap fitCenter(Bitmap toFit, BitmapPool pool, int width, int height) {
+  public static Bitmap fitCenter(@NonNull BitmapPool pool, @NonNull Bitmap toFit, int width,
+      int height) {
     if (toFit.getWidth() == width && toFit.getHeight() == height) {
       if (Log.isLoggable(TAG, Log.VERBOSE)) {
         Log.v(TAG, "requested target size matches input, returning input");
@@ -116,9 +118,7 @@ public final class TransformationUtils {
 
     Bitmap.Config config = getSafeConfig(toFit);
     Bitmap toReuse = pool.get(targetWidth, targetHeight, config);
-    if (toReuse == null) {
-      toReuse = Bitmap.createBitmap(targetWidth, targetHeight, config);
-    }
+
     // We don't add or remove alpha, so keep the alpha setting of the Bitmap we were given.
     TransformationUtils.setAlpha(toFit, toReuse);
 
@@ -133,6 +133,7 @@ public final class TransformationUtils {
     Matrix matrix = new Matrix();
     matrix.setScale(minPercentage, minPercentage);
     canvas.drawBitmap(toFit, matrix, DEFAULT_PAINT);
+    clear(canvas);
 
     return toReuse;
   }
@@ -158,31 +159,6 @@ public final class TransformationUtils {
   }
 
   /**
-   * Returns a matrix with rotation put based on Exif orientation tag. If the orientation is
-   * undefined or 0 null is returned.
-   *
-   * @param pathToOriginal Path to original image file that may have exif data.
-   * @return A rotation in degrees based on exif orientation
-   * @deprecated No longer used by Glide, scheduled to be removed in Glide 4.0
-   */
-  @TargetApi(Build.VERSION_CODES.ECLAIR)
-  @Deprecated
-  public static int getOrientation(String pathToOriginal) {
-    int degreesToRotate = 0;
-    try {
-      ExifInterface exif = new ExifInterface(pathToOriginal);
-      int orientation =
-          exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED);
-      return getExifOrientationDegrees(orientation);
-    } catch (Exception e) {
-      if (Log.isLoggable(TAG, Log.ERROR)) {
-        Log.e(TAG, "Unable to get orientation for image with path=" + pathToOriginal, e);
-      }
-    }
-    return degreesToRotate;
-  }
-
-  /**
    * This is an expensive operation that copies the image in place with the pixels rotated. If
    * possible rather use getOrientationMatrix, and put that as the imageMatrix on an ImageView.
    *
@@ -191,15 +167,14 @@ public final class TransformationUtils {
    *                        returned unmodified.
    * @return The oriented bitmap. May be the imageToOrient without modification, or a new Bitmap.
    */
-  public static Bitmap rotateImage(Bitmap imageToOrient, int degreesToRotate) {
+  public static Bitmap rotateImage(@NonNull Bitmap imageToOrient, int degreesToRotate) {
     Bitmap result = imageToOrient;
     try {
       if (degreesToRotate != 0) {
         Matrix matrix = new Matrix();
         matrix.setRotate(degreesToRotate);
-        result = Bitmap
-            .createBitmap(imageToOrient, 0, 0, imageToOrient.getWidth(), imageToOrient.getHeight(),
-                matrix, true);
+        result = Bitmap.createBitmap(imageToOrient, 0, 0, imageToOrient.getWidth(),
+            imageToOrient.getHeight(), matrix, true /*filter*/);
       }
     } catch (Exception e) {
       if (Log.isLoggable(TAG, Log.ERROR)) {
@@ -232,7 +207,6 @@ public final class TransformationUtils {
         break;
       default:
         degreesToRotate = 0;
-
     }
     return degreesToRotate;
   }
@@ -240,13 +214,14 @@ public final class TransformationUtils {
   /**
    * Rotate and/or flip the image to match the given exif orientation.
    *
-   * @param toOrient        The bitmap to rotate/flip.
    * @param pool            A pool that may or may not contain an image of the necessary
    *                        dimensions.
+   * @param toOrient        The bitmap to rotate/flip.
    * @param exifOrientation the exif orientation [1-8].
    * @return The rotated and/or flipped image or toOrient if no rotation or flip was necessary.
    */
-  public static Bitmap rotateImageExif(Bitmap toOrient, BitmapPool pool, int exifOrientation) {
+  public static Bitmap rotateImageExif(@NonNull BitmapPool pool, @NonNull Bitmap toOrient,
+      int exifOrientation) {
     final Matrix matrix = new Matrix();
     initializeMatrixForRotation(exifOrientation, matrix);
     if (matrix.isIdentity()) {
@@ -262,14 +237,12 @@ public final class TransformationUtils {
 
     Bitmap.Config config = getSafeConfig(toOrient);
     Bitmap result = pool.get(newWidth, newHeight, config);
-    if (result == null) {
-      result = Bitmap.createBitmap(newWidth, newHeight, config);
-    }
 
     matrix.postTranslate(-newRect.left, -newRect.top);
 
     final Canvas canvas = new Canvas(result);
     canvas.drawBitmap(toOrient, matrix, DEFAULT_PAINT);
+    clear(canvas);
 
     return result;
   }
@@ -278,22 +251,14 @@ public final class TransformationUtils {
    * Crop the image to a circle and resize to the specified width/height.  The circle crop will
    * have the same width and height equal to the min-edge of the result image.
    *
-   * @param recycled A mutable Bitmap with dimensions width and height that we can load the cropped
-   *                 portion of toCrop into.
+   * @param pool   The BitmapPool obtain a bitmap from.
    * @param toCrop   The Bitmap to resize.
    * @param destWidth    The width in pixels of the final Bitmap.
    * @param destHeight   The height in pixels of the final Bitmap.
    * @return The resized Bitmap (will be recycled if recycled is not null).
    */
-  public static Bitmap circleCrop(Bitmap recycled, Bitmap toCrop, int destWidth, int destHeight) {
-    if (toCrop == null) {
-      return null;
-    }
-
-    Bitmap result = (recycled != null) ? recycled
-        : Bitmap.createBitmap(destWidth, destHeight, getSafeConfig(toCrop));
-    setAlphaIfAvailable(result, true /*hasAlpha*/);
-
+  public static Bitmap circleCrop(@NonNull BitmapPool pool, @NonNull Bitmap toCrop, int destWidth,
+      int destHeight) {
     int destMinEdge = Math.min(destWidth, destHeight);
     float radius = destMinEdge / 2f;
     Rect destRect = new Rect((destWidth - destMinEdge) / 2, (destHeight - destMinEdge) / 2,
@@ -305,15 +270,74 @@ public final class TransformationUtils {
     Rect srcRect = new Rect((srcWidth - srcMinEdge) / 2, (srcHeight - srcMinEdge) / 2,
         srcMinEdge, srcMinEdge);
 
+    Bitmap result = pool.get(destWidth, destHeight, getSafeConfig(toCrop));
+    setAlphaIfAvailable(result, true /*hasAlpha*/);
     Canvas canvas = new Canvas(result);
 
     // Draw a circle
-    canvas.drawCircle(destRect.left + radius, destRect.top + radius, radius, CIRCLE_CROP_PAINT);
+    canvas.drawCircle(destRect.left + radius, destRect.top + radius, radius,
+        CIRCLE_CROP_SHAPE_PAINT);
 
     // Draw the bitmap in the circle
-    canvas.drawBitmap(toCrop, srcRect, destRect, CIRCLE_CROP_PAINT);
+    canvas.drawBitmap(toCrop, srcRect, destRect, CIRCLE_CROP_BITMAP_PAINT);
+    clear(canvas);
 
     return result;
+  }
+
+  /**
+   * Creates a bitmap from a source bitmap and rounds the corners.
+   *
+   * @param toTransform the source bitmap to use as a basis for the created bitmap.
+   * @param width the width of the generated bitmap.
+   * @param height the height of the generated bitmap.
+   * @param roundingRadius the corner radius to be applied (in device-specific pixels).
+   * @return a {@link Bitmap} similar to toTransform but with rounded corners.
+   * @throws IllegalArgumentException if roundingRadius, width or height is 0 or less.
+   */
+  public static Bitmap roundedCorners(@NonNull BitmapPool pool, @NonNull Bitmap toTransform,
+      int width, int height, int roundingRadius) {
+    Preconditions.checkArgument(width > 0, "width must be greater than 0.");
+    Preconditions.checkArgument(height > 0, "height must be greater than 0.");
+    Preconditions.checkArgument(roundingRadius > 0, "roundingRadius must be greater than 0.");
+
+    boolean recycleToTransform = false;
+
+    // Alpha is required for this transformation.
+    if (!Bitmap.Config.ARGB_8888.equals(toTransform.getConfig())) {
+      Bitmap argbBitmap = pool.get(toTransform.getWidth(), toTransform.getHeight(),
+          Bitmap.Config.ARGB_8888);
+      new Canvas(argbBitmap).drawBitmap(toTransform, 0, 0, null);
+
+      // We now own toTransform. It's our responsibility to replace it in the pool.
+      toTransform = argbBitmap;
+      recycleToTransform = true;
+    }
+    final Bitmap result = pool.get(width, height, Bitmap.Config.ARGB_8888);
+
+    setAlphaIfAvailable(result, true /* hasAlpha */);
+
+    BitmapShader shader = new BitmapShader(toTransform, Shader.TileMode.CLAMP,
+        Shader.TileMode.CLAMP);
+    Paint paint = new Paint();
+    paint.setAntiAlias(true);
+    paint.setShader(shader);
+    RectF rect = new RectF(0, 0, result.getWidth(), result.getHeight());
+    Canvas canvas = new Canvas(result);
+    canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+    canvas.drawRoundRect(rect, roundingRadius, roundingRadius, paint);
+    clear(canvas);
+
+    if (recycleToTransform) {
+      pool.put(toTransform);
+    }
+
+    return result;
+  }
+
+  // Avoids warnings in M+.
+  private static void clear(Canvas canvas) {
+    canvas.setBitmap(null);
   }
 
   private static Bitmap.Config getSafeConfig(Bitmap bitmap) {

@@ -17,6 +17,8 @@ import android.widget.ImageView;
 
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.RequestBuilder;
+import com.bumptech.glide.load.DataSource;
+import com.bumptech.glide.load.engine.GlideException;
 import com.bumptech.glide.load.resource.gif.GifDrawable;
 import com.bumptech.glide.request.RequestListener;
 import com.bumptech.glide.request.target.Target;
@@ -62,21 +64,22 @@ public class FullscreenActivity extends Activity {
     });
 
     RequestBuilder<Drawable> thumbnailRequest = Glide.with(this)
-        .asDrawable()
-        .apply(decodeTypeOf(Bitmap.class))
-        .load(result);
+        .load(result)
+        .apply(decodeTypeOf(Bitmap.class));
 
-    Glide.with(this).asDrawable().thumbnail(thumbnailRequest).load(result.images.original.url)
+    Glide.with(this)
+        .load(result.images.original.url)
+        .thumbnail(thumbnailRequest)
         .listener(new RequestListener<Drawable>() {
           @Override
-          public boolean onLoadFailed(Object model, Target<Drawable> target,
+          public boolean onLoadFailed(GlideException e, Object model, Target<Drawable> target,
               boolean isFirstResource) {
             return false;
           }
 
           @Override
           public boolean onResourceReady(Drawable resource, Object model, Target<Drawable> target,
-              boolean isFromMemoryCache, boolean isFirstResource) {
+              DataSource dataSource, boolean isFirstResource) {
             if (resource instanceof GifDrawable) {
               gifDrawable = (GifDrawable) resource;
             } else {
@@ -84,6 +87,7 @@ public class FullscreenActivity extends Activity {
             }
             return false;
           }
-        }).into(gifView);
+        })
+        .into(gifView);
   }
 }

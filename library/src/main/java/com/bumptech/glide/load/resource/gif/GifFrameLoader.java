@@ -46,7 +46,7 @@ class GifFrameLoader {
   private Transformation<Bitmap> transformation;
 
   public interface FrameCallback {
-    void onFrameReady(int index);
+    void onFrameReady();
   }
 
   public GifFrameLoader(Context context, GifDecoder gifDecoder, int width, int height,
@@ -121,6 +121,10 @@ class GifFrameLoader {
     return gifDecoder.getByteSize() + getFrameSize();
   }
 
+  int getCurrentIndex() {
+    return current != null ? current.index : -1;
+  }
+
   private int getFrameSize() {
     return Util.getBitmapByteSize(getCurrentFrame().getWidth(), getCurrentFrame().getHeight(),
         getCurrentFrame().getConfig());
@@ -177,18 +181,19 @@ class GifFrameLoader {
       return;
     }
     isLoadPending = true;
+    // Get the delay before incrementing the pointer because the delay indicates the amount of time
+    // we want to spend on the current frame.
+    int delay = gifDecoder.getNextDelay();
+    long targetTime = SystemClock.uptimeMillis() + delay;
 
     gifDecoder.advance();
-    long targetTime = SystemClock.uptimeMillis() + gifDecoder.getNextDelay();
     next = new DelayTarget(handler, gifDecoder.getCurrentFrameIndex(), targetTime);
     requestBuilder.clone().apply(signatureOf(new FrameSignature())).load(gifDecoder).into(next);
   }
 
   private void recycleFirstFrame() {
     if (firstFrame != null) {
-      if (!Glide.get(context).getBitmapPool().put(firstFrame)) {
-        firstFrame.recycle();
-      }
+      Glide.get(context).getBitmapPool().put(firstFrame);
       firstFrame = null;
     }
   }
@@ -208,7 +213,7 @@ class GifFrameLoader {
       // concurrent modifications.
       for (int i = callbacks.size() - 1; i >= 0; i--) {
         FrameCallback cb = callbacks.get(i);
-        cb.onFrameReady(delayTarget.index);
+        cb.onFrameReady();
       }
       if (previous != null) {
         handler.obtainMessage(FrameLoaderCallback.MSG_CLEAR, previous).sendToTarget();
